@@ -230,7 +230,7 @@ Note: You didn't specify an "-out" parameter to save this plan, so when
 
 + aws_subnet.public
     availability_zone:       "" => "us-west-1a"
-    cidr_block:              "" => "10.128.0.0/16"
+    cidr_block:              "" => "10.128.0.0/24"
     map_public_ip_on_launch: "" => "1"
     tags.#:                  "" => "1"
     tags.Name:               "" => "public"
@@ -364,8 +364,93 @@ resource "aws_instance" "nat" {
   security_groups = ["${aws_security_group.default.id}", "${aws_security_group.nat.id}"]
   key_name = "${aws_key_pair.deployer.key_name}"
   source_dest_check = false
-  tags = {
+  tags = { 
     Name = "nat"
+  }
+  connection {
+    user = "ubuntu"
+    key_file = "ssh/insecure-deployer"
+  }
+  provisioner "remote-exec" {
+    inline = [
+      "sudo echo 'nat' > /etc/hostname",
+      "sudo echo '127.0.0.0 nat' >> /etc/hosts",
+      "curl -sSL https://get.docker.com/ubuntu/ | sudo sh",
+      "sudo iptables -t nat -A POSTROUTING -j MASQUERADE",
+      "echo 1 > /proc/sys/net/ipv4/conf/all/forwarding",
+      "sudo mkdir -p /etc/openvpn",
+      "sudo docker run --name ovpn-data -v /etc/openvpn busybox",
+      "sudo docker run --volumes-from ovpn-data --rm kylemanna/openvpn ovpn_genconfig -p 10.128.0.0/16 -u udp://${aws_instance.nat.public_ip}"
+    ]
   }
 }
 ```
+
+Create private subnet and configure routing
+-------------------------------------------
+Create a private subnet with a CIDR range of 10.128.1.0/24 and configure the routing table to route all traffic via the nat. append 'main.tf' with the below config:
+
+```
+/* Private subnet */
+resource "aws_subnet" "private" {
+  vpc_id            = "${aws_vpc.default.id}"
+  cidr_block        = "10.128.1.0/24"
+  availability_zone = "us-west-1a"
+  map_public_ip_on_launch = false
+  tags { 
+    Name = "private" 
+  }
+}
+
+/* Routing table for private subnet */
+resource "aws_route_table" "private" {
+  vpc_id = "${aws_vpc.default.id}"
+  route {
+    cidr_block = "0.0.0.0/0"
+    instance_id = "${aws_instance.nat.id}"
+  }
+}
+
+/* Associate the routing table to public subnet */
+resource "aws_route_table_association" "private" {
+  subnet_id = "${aws_subnet.private.id}"
+  route_table_id = "${aws_route_table.private.id}"
+}
+```
+
+Run ```terraform plan``` and ```terraform apply```
+
+Configure OpenVPN server and generate client config
+---------------------------------------------------
+
+1. Initialize PKI
+
+  ```
+  ssh -t -i ssh/insecure-deployer \
+  ubuntu@$(terraform output nat.ip) \
+  sudo docker run --volumes-from ovpn-data --rm -it kylemanna/openvpn ovpn_initpki
+  ```
+
+2. Start the VPN server
+
+  ```
+  ssh -t -i ssh/insecure-deployer \
+  ubuntu@$(terraform output nat.ip) \
+  sudo docker run --volumes-from ovpn-data -d -p 1194:1194/udp --cap-add=NET_ADMIN kylemanna/openvpn
+  ```
+
+3. Generate client certificate
+
+  ```
+  ssh -t -i ssh/insecure-deployer \
+  ubuntu@$(terraform output nat.ip) \
+  "sudo docker run --volumes-from ovpn-data --rm -it kylemanna/openvpn easyrsa build-client-full $USER nopass"
+  ```
+
+4. Download VPN config
+
+  ```
+  ssh -t -i ssh/insecure-deployer \
+  ubuntu@$(terraform output nat.ip) \
+  "sudo docker run --volumes-from ovpn-data --rm kylemanna/openvpn ovpn_getclient $USER" > $USER.ovpn
+  ```
