@@ -1,5 +1,5 @@
-Building and automating a secure infrastructure on AWS using Terraform and Chef
-===============================================================================
+Building a secure network with VPN on AWS using Docker and Terraform
+====================================================================
 
 Architecture
 ------------
