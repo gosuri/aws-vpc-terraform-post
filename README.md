@@ -23,6 +23,8 @@ To summary, we will be building the below components:
 - Routing table for public subnet
 - Routing table for private subnet
 - NAT/VPN server
+- App servers running nginx in private subnet
+- Load Balancer for the app servers in public subnet
 
 The VPC and instances can be built using the AWS web console but using [Terraform](https://www.terraform.io) makes it extremely easy to build and make updates your infrastructure that can version controlled and collaborative. Terraform uses configuration files to describe infrastructure components and generates an execution plan describing what it will do to reach the desired state, and then executes it to build the described infrastructure.
 
@@ -93,6 +95,7 @@ provider "aws" {
 
 resource "aws_vpc" "default" {
   cidr_block = "10.128.0.0/16"
+  enable_dns_hostnames = true
   tags {
     Name = "airpair-example"
   }
@@ -132,7 +135,7 @@ aws_vpc.default: Creating...
   cidr_block:                "" => "10.128.0.0/16"
   default_network_acl_id:    "" => "<computed>"
   default_security_group_id: "" => "<computed>"
-  enable_dns_hostnames:      "" => "0"
+  enable_dns_hostnames:      "" => "1"
   enable_dns_support:        "" => "0"
   main_route_table_id:       "" => "<computed>"
   tags.#:                    "" => "1"
@@ -495,15 +498,17 @@ Configure OpenVPN server and generate client config
   ```
   ssh -t -i ssh/insecure-deployer \
   ubuntu@$(terraform output nat.ip) \
-  sudo docker run --volumes-from ovpn-data --rm -it kylemanna/openvpn ovpn_initpki
+  sudo docker run --volumes-from ovpn-data --rm -it gosuri/openvpn ovpn_initpki
   ```
+
+  The above command will prompt you for a passphrase for the root certificate, choose a strong passphrase and store is some where you'll rememeber. This passphrase is required every time you genenerate a new client configuration.
 
 2. Start the VPN server
 
   ```
   ssh -t -i ssh/insecure-deployer \
   ubuntu@$(terraform output nat.ip) \
-  sudo docker run --volumes-from ovpn-data -d -p 1194:1194/udp --cap-add=NET_ADMIN kylemanna/openvpn
+  sudo docker run --volumes-from ovpn-data -d -p 1194:1194/udp --cap-add=NET_ADMIN gosuri/openvpn
   ```
 
 3. Generate client certificate
@@ -511,7 +516,7 @@ Configure OpenVPN server and generate client config
   ```
   ssh -t -i ssh/insecure-deployer \
   ubuntu@$(terraform output nat.ip) \
-  "sudo docker run --volumes-from ovpn-data --rm -it kylemanna/openvpn easyrsa build-client-full $USER nopass"
+  sudo docker run --volumes-from ovpn-data --rm -it gosuri/openvpn easyrsa build-client-full $USER nopass
   ```
 
 4. Download VPN config
@@ -519,5 +524,5 @@ Configure OpenVPN server and generate client config
   ```
   ssh -t -i ssh/insecure-deployer \
   ubuntu@$(terraform output nat.ip) \
-  "sudo docker run --volumes-from ovpn-data --rm kylemanna/openvpn ovpn_getclient $USER" > $USER.ovpn
+  sudo docker run --volumes-from ovpn-data --rm gosuri/openvpn ovpn_getclient $USER > $USER.ovpn
   ```

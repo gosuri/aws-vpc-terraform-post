@@ -36,6 +36,7 @@ resource "aws_subnet" "public" {
   cidr_block        = "10.128.0.0/24"
   availability_zone = "us-west-1a"
   map_public_ip_on_launch = true
+  depends_on = ["aws_internet_gateway.default"]
   tags { 
     Name = "public" 
   }
@@ -67,6 +68,7 @@ resource "aws_subnet" "private" {
   cidr_block        = "10.128.1.0/24"
   availability_zone = "us-west-1a"
   map_public_ip_on_launch = false
+  depends_on = ["aws_instance.nat"]
   tags { 
     Name = "private" 
   }
