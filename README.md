@@ -161,10 +161,13 @@ The `provider` block defines what provider to build the infructure for, Terrafor
 
 `resource` block defines the resource being created. The above example creates a VPC with a CIDR block of `10.128.0.0/16` and attaches a Name tag `airpair-example`, you can read more about various other parameters that can be defined for ```aws_vpc``` on the [aws_vpc resource documentation page](https://www.terraform.io/docs/providers/aws/r/vpc.html)
 
+Parameters accepts string values which that can be [interpolated](https://www.terraform.io/docs/configuration/interpolation.html) when wrapped with `${}`. In the ```aws``` provider block, specifying ```${var.access_key}``` for 
+for access key will read the value from the user provided for variable ```access_key```. You will see extensive usage of interpolation in the rest of this guide.
+
 Provisioning your VPC
 ---------------------
 
-Running `terraform apply` will create the VPC by prompting you to to input AWS access key and secret key, the output should look like look like:
+Running `terraform apply` will create the VPC by prompting you to to input AWS access key and secret key, the output should look like look like the below. For default values, hitting `<return>` key will assign default values defined in the `variables.tf` file.
 
 ```sh
 $ terraform apply
@@ -214,14 +217,13 @@ access_key = "foo"
 secret_key = "bar"
 ```
 
-
 Updating your infrastructure
 ----------------------------
 
-Lets now add a public subnet with a ip range of 10.128.0.0/24 and attach a internet gateway, append below configuration to our `main.tf` file:
+Lets now add a public subnet with a ip range of 10.128.0.0/24 and attach a internet gateway, create a `public-subnet.tf` with the below configuration:
 
 ```
-/* Internet gateway */
+/* Internet gateway for the public subnet */
 resource "aws_internet_gateway" "default" {
   vpc_id = "${aws_vpc.default.id}"
 }
@@ -229,11 +231,12 @@ resource "aws_internet_gateway" "default" {
 /* Public subnet */
 resource "aws_subnet" "public" {
   vpc_id            = "${aws_vpc.default.id}"
-  cidr_block        = "10.128.0.0/24"
+  cidr_block        = "${var.public_subnet_cidr}"
   availability_zone = "us-west-1a"
   map_public_ip_on_launch = true
-  tags {
-    Name = "public"
+  depends_on = ["aws_internet_gateway.default"]
+  tags { 
+    Name = "public" 
   }
 }
 
@@ -253,11 +256,13 @@ resource "aws_route_table_association" "public" {
 }
 ```
 
-Resources can be referenced using [interpolation syntax](https://www.terraform.io/docs/configuration/interpolation.html) by wrapping them with `${}`. In the `aws_internet_gateway` resource block, specifying `${aws_vpc.default.id}` for `vpc_id` will create gateway under the `default` vpc.
-
 Anything under ```/* .. */``` will be considered as comments.
 
-Running `terraform plan` will generate an execution plan for you to verify before creating the actual resources, it is recommended that you always inspect the plan before running the `apply` command. The output of `terraform plan` should look something like the below:
+Running `terraform plan` will generate an execution plan for you to verify before creating the actual resources, it is recommended that you always inspect the plan before running the `apply` command.
+
+Resource dependencies are implicitly determined during the plan phase. They can also be explictly defined using ```depends_on``` parameter. In the above configuration, resource ```aws_subnet.public``` depends on ```aws_internet_gatway.default``` and will only be created after ```aws_internet_gateway.default``` is successfully created.
+
+The output of `terraform plan` should look something like the below:
 
 ```sh
 $ terraform plan
@@ -298,9 +303,9 @@ Note: You didn't specify an "-out" parameter to save this plan, so when
     vpc_id:                  "" => "vpc-30965455"
 ```
 
-The `+` before `aws_internet_gateway.default` indicates that a new resource will be created. After reviewing your plan, run `terraform apply` to create your resources, you can verify by running `terraform show` or by visiting the aws console.  
-
 *The vpc_id will different in your actual output from the above example output*
+
+The `+` before `aws_internet_gateway.default` indicates that a new resource will be created. After reviewing your plan, run `terraform apply` to create your resources. You can verify the subnet has been created by running `terraform show` or by visiting the aws console.  
 
 Create security groups
 ----------------------
@@ -311,12 +316,12 @@ We will creating 3 security groups:
 - nat: security group for nat instances that allows SSH traffic from internet
 - web: security group that allows web traffic from the internet
 
-To keep our `main.tf` at a managable size, lets create our security groups in a `sgroups.tf` file with the below configuration. Terraform will load all files with a `.tf` extention.
+Create your security groups in a `security-groups.tf` file with the below configuration:
 
 ```
-/* default security group */
+/* Default security group */
 resource "aws_security_group" "default" {
-  name = "default-vpc"
+  name = "default-airpair-example"
   description = "Default security group that allows inbound and outbound traffic from all instances in the VPC"
   vpc_id = "${aws_vpc.default.id}"
   
@@ -327,54 +332,60 @@ resource "aws_security_group" "default" {
     self        = true
   }
   
-  tags { Name = "default-vpc" }
+  tags { 
+    Name = "airpair-example-default-vpc" 
+  }
 }
 
 
 /* Security group for the nat server */
 resource "aws_security_group" "nat" {
-  name = "nat"
+  name = "nat-airpair-example"
   description = "Security group for nat instances that allows SSH and VPN traffic from internet"
   vpc_id = "${aws_vpc.default.id}"
   
   ingress {
     from_port = 22
-    to_port  = 22
-    protocol = "tcp"
+    to_port   = 22
+    protocol  = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
   
   ingress {
     from_port = 1194
-    to_port  = 1194
-    protocol = "udp"
+    to_port   = 1194
+    protocol  = "udp"
     cidr_blocks = ["0.0.0.0/0"]
   }
   
-  tags { Name = "nat" }
+  tags { 
+    Name = "nat-airpair-example" 
+  }
 }
 
 /* Security group for the web */
 resource "aws_security_group" "web" {
-  name = "web"
+  name = "web-airpair-example"
   description = "Security group for web that allows web traffic from internet"
   vpc_id = "${aws_vpc.default.id}"
   
   ingress {
     from_port = 80
-    to_port  = 80
-    protocol = "tcp"
+    to_port   = 80
+    protocol  = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
   
   ingress {
     from_port = 443
-    to_port  = 443
-    protocol = "tcp"
+    to_port   = 443
+    protocol  = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
   
-  tags { Name = "web" }
+  tags { 
+    Name = "web-airpair-example" 
+  }
 }
 ```
 
@@ -391,7 +402,7 @@ Apply complete! Resources: 3 added, 0 changed, 0 destroyed.
 Create SSH Key Pair
 -------------------
 
-We will need a default ssh key to be bootstraped on the newly created instances to be able to login, generate a new key by running:
+We will need a default ssh key to be bootstraped on the newly created instances to be able to login, first, generate a new key by running:
 
 ```sh
 $ mkdir -p ssh # make sure the ssh directory exists
@@ -400,7 +411,7 @@ $ sh-keygen -t rsa -C "insecure-deployer" -P '' -f ssh/insecure-deployer
 
 The above command will create a public-private key pair under ssh, this is an insecure key and should be replaced after the instance is boostraped.
 
-Register the newly generated SSH key pair by adding the below config to your `main.tf` and run `terraform plan` and `terraform apply`.
+Create a new file `key-pairs.sh` with the below config and register the newly generated SSH key pair by running`terraform plan` and `terraform apply`.
 
 ```
 resource "aws_key_pair" "deployer" {
@@ -409,18 +420,20 @@ resource "aws_key_pair" "deployer" {
 }
 ```
 
-Terraform interpolation syntax allows reading data from files. Variables in this file are not interpolated. The contents of the file are read as-is.
+Terraform interpolation syntax also allows reading data from files using `$file("path/to/file")`. Variables in this file are not interpolated. The contents of the file are read as-is.
 
 Create NAT Instance
 -------------------
 
-NAT instances reside in the public subnet and in order to route traffic, they need to have 'source destination check' disabled. Also, they belong to the `default` secruity group to allow traffic from instances in that group and `nat` security group to allow SSH and VPN traffic from the internet. Create a file `nat.tf` with the below config:
+NAT instances reside in the public subnet and in order to route traffic, they need to have 'source destination check' disabled. They belong to the `default` secruity group to allow traffic from instances in that group and `nat` security group to allow SSH and VPN traffic from the internet. 
+
+Create a file `nat-server.tf` with the below config:
 
 ```
 /* NAT/VPN server */
 resource "aws_instance" "nat" {
-  ami = "ami-049d8641"
-  instance_type = "t2.small"
+  ami = "${lookup(var.amis, var.region)}"
+  instance_type = "t2.micro"
   subnet_id = "${aws_subnet.public.id}"
   security_groups = ["${aws_security_group.default.id}", "${aws_security_group.nat.id}"]
   key_name = "${aws_key_pair.deployer.key_name}"
@@ -434,16 +447,25 @@ resource "aws_instance" "nat" {
   }
   provisioner "remote-exec" {
     inline = [
-      "curl -sSL https://get.docker.com/ubuntu/ | sudo sh",
       "sudo iptables -t nat -A POSTROUTING -j MASQUERADE",
       "echo 1 > /proc/sys/net/ipv4/conf/all/forwarding",
+      /* Install docker */ 
+      "curl -sSL https://get.docker.com/ubuntu/ | sudo sh",
+      /* Initialize open vpn data container */
       "sudo mkdir -p /etc/openvpn",
       "sudo docker run --name ovpn-data -v /etc/openvpn busybox",
-      "sudo docker run --volumes-from ovpn-data --rm kylemanna/openvpn ovpn_genconfig -p 10.128.0.0/16 -u udp://${aws_instance.nat.public_ip}"
+      /* Generate OpenVPN server config */
+      "sudo docker run --volumes-from ovpn-data --rm gosuri/openvpn ovpn_genconfig -p ${var.vpc_cidr} -u udp://${aws_instance.nat.public_ip}"
     ]
   }
 }
 ```
+
+In order for NAT instance to route packets, [iptables](http://ipset.netfilter.org/iptables.man.html) needs to be configured be with a rule in the `nat` table for [IP Masquerade](http://www.tldp.org/HOWTO/IP-Masquerade-HOWTO/ipmasq-background2.1.html). We also need to install docker, download the openvpn container and generate server configuration.
+
+Terraform provides a set of [provisioning options](https://www.terraform.io/docs/provisioners/index.html) that can be used to run aribitary commands on the instance when they are created. For our nat instance above, we use ```remote-exec``` to execute the set of commands on the instance.
+
+``connection`` block defines the [connection parameters](https://www.terraform.io/docs/provisioners/connection.html) to remotely ssh into the instance.
 
 Create private subnet and configure routing
 -------------------------------------------
@@ -542,39 +564,126 @@ You read more about using count in resources at [terraform variable documentatio
 
 Run ```terraform plan``` and ```terraform apply```
 
+Allowing generated configuration to be easily accessable to other programs
+--------------------------------------------------------------------------
+
+Terraform allows for defining output to templates, output variables can be accessed by running ```terraform output VARIABLE```.
+
+Create `outputs.tf` file with the below configuration:
+
+```
+output "app.0.ip" {
+  value = "${aws_instance.app.0.private_ip}"
+}
+
+output "app.1.ip" {
+  value = "${aws_instance.app.1.private_ip}"
+}
+
+output "nat.ip" {
+  value = "${aws_instance.nat.public_ip}"
+}
+
+output "elb.hostname" {
+  value = "${aws_elb.app.dns_name}"
+}
+```
+
+Since we are not changing any values, run `terraform apply` to populate outputs in the state file. Inspect the `elb.hostname` by running
+
+$ open "http://$(terraform output elb.hostname)"
+
+The above command will open a web browser. If you get an connection error, it is likely the DNS has not propogated in time and you should try again after a few minutes.
+
 Configure OpenVPN server and generate client config
 ---------------------------------------------------
 
-1. Initialize PKI
+The below steps configure the VPN servers and generate a client configuration with embedded keys to connect with your openvpn client on your workstation. 
 
-  ```
+Considering the commands are fairly large, we will be creating command wrappers to be able to easily run them again. A big part of operatinaly effiency comes from our ability to simply complicated command which are unlikely to be easily recalled. After each successful step, we will save the command under `bin` in an executable file to make it easy for us to do it the next time. 
+
+
+1. Initialize PKI and save the command under bin/ovpn-init
+
+  ```sh
+  $ cat > bin/ovpn-init <<EOF
   ssh -t -i ssh/insecure-deployer \
   ubuntu@$(terraform output nat.ip) \
   sudo docker run --volumes-from ovpn-data --rm -it gosuri/openvpn ovpn_initpki
+  EOF
+
+  $ chmod +x bin/ovpn-init 
+
+  $ bin/ovpn-init
   ```
 
   The above command will prompt you for a passphrase for the root certificate, choose a strong passphrase and store is some where you'll rememeber. This passphrase is required every time you genenerate a new client configuration.
 
-2. Start the VPN server
+2. Start the VPN server.
 
-  ```
+  ```sh
+  $ cat > bin/ovpn-start <<EOF
   ssh -t -i ssh/insecure-deployer \
   ubuntu@$(terraform output nat.ip) \
   sudo docker run --volumes-from ovpn-data -d -p 1194:1194/udp --cap-add=NET_ADMIN gosuri/openvpn
+  EOF
+  
+  $ chmod +x bin/ovpn-start
+  $ bin/ovpn-start
   ```
 
 3. Generate client certificate
 
-  ```
+  ```sh
+  $ cat > bin/ovpn-new-client <<EOF
   ssh -t -i ssh/insecure-deployer \
   ubuntu@$(terraform output nat.ip) \
-  sudo docker run --volumes-from ovpn-data --rm -it gosuri/openvpn easyrsa build-client-full $USER nopass
+  sudo docker run --volumes-from ovpn-data --rm -it gosuri/openvpn easyrsa build-client-full "\${1}" nopass
+  EOF
+
+  $ chmod +x bin/ovpn-new-client
+
+  # generate a configuration for your user
+  $ bin/ovpn-new-client $USER
   ```
 
 4. Download VPN config
 
-  ```
+  ```sh
+  $ cat > bin/ovpn-client-config <<EOF
   ssh -t -i ssh/insecure-deployer \
   ubuntu@$(terraform output nat.ip) \
-  sudo docker run --volumes-from ovpn-data --rm gosuri/openvpn ovpn_getclient $USER > $USER.ovpn
+  sudo docker run --volumes-from ovpn-data --rm gosuri/openvpn ovpn_getclient "\${1}" > "\${1}-airpair-example.ovpn"
+  EOF
+
+  $ chmod +x bin/ovpn-client-config
+  $ bin/ovpn-client-config $USER
   ```
+
+5. Connect using downloaded configuration
+
+  ```sh
+  $ open $($USER-airpair-example.ovpn)
+  ```
+
+Test your private connection
+----------------------------
+
+After successfully connecting using the VPN client, connect to one of app servers using a private IP address to validate that you have a connection:
+
+```sh
+$ open "http://$(terraform output app.1.ip)"
+
+```
+
+Alternatively, you can also ssh into the private instance
+
+```sh
+$ ssh -t -i ssh/insecure-deployer "ubuntu@$(terraform output app.1.ip)"
+```
+
+Teardown infrastructure
+-----------------------
+
+Conclusion
+----------
