@@ -1,6 +1,6 @@
 /* NAT/VPN server */
 resource "aws_instance" "nat" {
-  ami = "ami-049d8641"
+  ami = "${lookup(var.amis, var.region)}"
   instance_type = "t2.micro"
   subnet_id = "${aws_subnet.public.id}"
   security_groups = ["${aws_security_group.default.id}", "${aws_security_group.nat.id}"]
@@ -15,12 +15,12 @@ resource "aws_instance" "nat" {
   }
   provisioner "remote-exec" {
     inline = [
-      "curl -sSL https://get.docker.com/ubuntu/ | sudo sh",
       "sudo iptables -t nat -A POSTROUTING -j MASQUERADE",
       "echo 1 > /proc/sys/net/ipv4/conf/all/forwarding",
+      "curl -sSL https://get.docker.com/ubuntu/ | sudo sh",
       "sudo mkdir -p /etc/openvpn",
       "sudo docker run --name ovpn-data -v /etc/openvpn busybox",
-      "sudo docker run --volumes-from ovpn-data --rm gosuri/openvpn ovpn_genconfig -p 10.128.0.0/16 -u udp://${aws_instance.nat.public_ip}"
+      "sudo docker run --volumes-from ovpn-data --rm gosuri/openvpn ovpn_genconfig -p ${var.vpc_cidr} -u udp://${aws_instance.nat.public_ip}"
     ]
   }
 }

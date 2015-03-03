@@ -1,7 +1,7 @@
 /* App servers */
 resource "aws_instance" "app" {
   count = 2
-  ami = "ami-049d8641"
+  ami = "${lookup(var.amis, var.region)}"
   instance_type = "t2.micro"
   subnet_id = "${aws_subnet.private.id}"
   security_groups = ["${aws_security_group.default.id}"]
