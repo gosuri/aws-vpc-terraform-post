@@ -642,7 +642,6 @@ Considering the commands are fairly large, we will be creating command wrappers 
   EOF
 
   $ chmod +x bin/ovpn-new-client
-
   # generate a configuration for your user
   $ bin/ovpn-new-client $USER
   ```
@@ -660,11 +659,7 @@ Considering the commands are fairly large, we will be creating command wrappers 
   $ bin/ovpn-client-config $USER
   ```
 
-5. Connect using downloaded configuration
-
-  ```sh
-  $ open $($USER-airpair-example.ovpn)
-  ```
+5. The above command creates `$USER-airpair-example.ovpn` client configuration file in the current directory, double click on the file to import the configuration to your VPN client. You can also connection using iPhone/Android device, check out [OpenVPN Connect for iPhone](https://itunes.apple.com/us/app/openvpn-connect/id590379981?mt=8) and [OpenVPN Connect on Play Store](https://play.google.com/store/apps/details?id=net.openvpn.openvpn&hl=en)
 
 Test your private connection
 ----------------------------
@@ -685,5 +680,27 @@ $ ssh -t -i ssh/insecure-deployer "ubuntu@$(terraform output app.1.ip)"
 Teardown infrastructure
 -----------------------
 
+Destroy our infructure by running `destroy` command and answering with `yes` for confimation, make sure to disconnect from the VPN to be retain internet connection:
+
+```sh
+$ terraform destroy
+
+Do you really want to destroy?
+  Terraform will delete all your managed infrastructure.
+  There is no undo. Only 'yes' will be accepted to confirm.
+
+  Enter a value: yes
+
+...
+
+Apply complete! Resources: 0 added, 0 changed, 16 destroyed.
+```
+
 Conclusion
 ----------
+
+There is a lot more to Terraform than what was convered in this post, checkout [terraform.io](https://terraform.io) and the [github project](http://github.com/hashicorp/terraform) to see more this amazing tool.
+
+I hope you found this guide useful, I gave my best to keep the guide accurate and updated, if there is any part of the guide that you felt could use imporovement, please leave a comment and I will attend to it promptly. 
+
+I hope to continue to write more guides on various topics that I think will be useful to improve operational efficienty and readiness. You can reach me [Twitter at @kn0tch](https://twitter.com/kn0tch) if you have a recomendation for topic or want simply want stay connected, I'm usually active and always looking foward to a good conversation, come say hi!
