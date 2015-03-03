@@ -1,22 +1,49 @@
 Guide to automating a multi-tiered application securely on AWS with Docker and Terraform.
-=======================================================================================
+=========================================================================================
 
-Data is particularly vulnerable while it is traveling over the Internet, securing the transporation of the data is the most fundamental component to a secure network. 
+Data is a crucial part of our infrastructure and particularly vulnerable while it is traveling over the Internet. Securing the transportation of data is a fundamental requirement for a secure network. 
 
-By hosting your crutial network resources such as databases and applicaiton servers in private network will lay a foundation to build such a network.
+While there are server transport level protocols to secure the transmission, connecting networked resource in a private network is the most basic and common way to keep our data secure.
 
-The Goal of the guide is to help you a build private network on AWS and provide you a secure way to access them using a VPN. 
+I wrote this in guide in an attempt to to help you a build such a network on AWS along with a secure way to access them using a VPN. 
 
-The scope is limited to building secure network and does not cover application and OS level security.
+I kept the scope limited to building the private network and did not cover application and OS level security which are also equally important.
 
-Architecture
-------------
+This is a technical guide, the audiences this guide is intended for are:
 
-We will essentially be building a Virtual Private Cloud (VPC) on AWS with public and a private subnets(sub-networks). Instances in the private subnet can't access the internet directly thereby making the private subnet an ideal place for application and database servers. The private subnet will comprise of application and database instances along with any other support resource(s) required to serve your application such as caching, build servers, configuration stores etc. Instances in the private subnet rely on a Network Address Translation (NAT) server running in the public subnet to connect to the internet. All Instances in the public subnet can transmit inbound and outbount traffic from the internet, the routing resources such as load balancers, vpn and nat servers reside in this subnet. 
+- Developers with little or no system administration experience wanting to deploy applications on AWS.
+- System administrators wanting to understand automation.
 
-The NAT server will also run a VPN server running OpenVPN, a full-featured SSL VPN which implements OSI layer 3 secure network extension using the industry standard SSL/TLS protocol over a UDP encapsulated network.
+A basic level of linux command line knowledge is required as well.
 
-Connection to the VPN server can be established using any OpenVPN client. On a Mac, you could use [Viscocity](https://www.sparklabs.com/viscosity) is a good commercial client, or an opensource client [Tunnelblick for Mac](https://code.google.com/p/tunnelblick/). Clients are for other operating system are listed on the [openvpn clients page](https://openvpn.net/index.php/access-server/docs/admin-guides/182-how-to-connect-to-access-server-with-linux-clients.html).
+Before we begin
+---------------
+
+As you walk thru various sections of this guide, you will be creating real network resources that cost money. I did my best to keep the utilization footprint to the lowest possible configuration and I estimate less than hour to complete all the steps in this guide.
+
+By the end, to demonstrate the disposable nature of infstrasture-of-code, we will be destroying all the infrastructure components that were created during the course of this tutorial.
+
+Please have the below ready before we begin:
+
+- AWS access and secret keys to an active AWS account
+- A unix/linux workstation with internet connection, almost all commands will work on Windows too with a shell emulator like cygwin
+
+What we will be building
+------------------------
+
+We will essentially be building a Virtual Private Cloud (VPC) on AWS along with a public and a private subnet (sub-networks) pair. 
+
+Instances in the private subnet cannot directly access the internet thereby making the the subnet an ideal place for application and database servers. 
+
+During the course of this tutorial, we will be creating our application instances in the private subnet. The private subnet will also be where you should be hosting application support instances like database instances, cache servers, log hosts, build servers, configuration stores etc. Instances in the private subnet rely on a Network Address Translation (NAT) server running in the public subnet to connect to the internet. 
+
+All Instances in the public subnet can transmit inbound and outbound traffic to and from the internet, the routing resources such as load balancers, vpn and nat servers reside in this subnet. 
+
+The NAT server will also run a OpenVPN server, a full-featured SSL VPN which implements OSI layer 3 secure network extension using the industry standard SSL/TLS protocol over a UDP encapsulated network.
+
+In the later part of this guide, we will connect to our private networking using this VPN server using a compatible OpenVPN client. On a Mac, [Viscosity for Mac](https://www.sparklabs.com/viscosity) is a good commercial client and my personal favorite. [Tunnelblick](https://code.google.com/p/tunnelblick/) a open-source client that’s compatible too. 
+
+For other operating systems, see [openvpn clients page](https://openvpn.net/index.php/access-server/docs/admin-guides/182-how-to-connect-to-access-server-with-linux-clients.html) for a list.
 
 To summarize, we will be building the below components:
 
@@ -24,31 +51,33 @@ To summarize, we will be building the below components:
 - Internet Gateway for public subnet
 - Public subnet for routing instances
 - Private subnet for application resources
-- Routing table for public subnet
-- Routing table for private subnet
-- NAT/VPN server to route outbound traffic from your instances in private network and provide your workstation secure access to private network resources.
-connect instances private network and provide you access 
-- App servers running nginx in private subnet
+- Routing tables for public and private subnets
+- NAT/VPN server to route outbound traffic from your instances in private network and provide your workstation secure access to network resources.
+- Application servers running nginx docker containers in a private subnet
 - Load balancers in the public subnet to manage and route web traffic to app servers
 
-The network components can be built and managed using the native AWS web console but it makes your infrastrcuture operatianally vurnerable to changes and surprises. Automating the building, changing, and versioning your infrastructure safely and effeciently increases your operational readiness exponentially. It allows you move at an extremly velocity and take risks as you grow your infrstrature while making you almost. Automation lays the foundation to easily provision your infrastrure across many types of clouds to manage heterogeneous information systems.
+Although all the above mentioned components can be built and managed using the native AWS web console, it makes your infrastructure operationally vulnerable to changes and surprises. 
 
-[Terraform](https://www.terraform.io) is automation tool for the cloud. It provides powerful primitives to elegantly define your infrastructure as code. It extremely easy to build and make updates your infrastructure that can version controlled and collaborative. Terraform uses user defined configuration files with a simple yet powerful syntax to describe infrastructure components and generates an execution plan describing what it will do to reach the desired state. You can then choose to execute (or modify) the pln to build or removed desired infrasture components.
+Automating the building, changing, and versioning your infrastructure safely and efficiently increases your operational readiness exponentially. It allows you move at an higher velocity you grow your infrastructure. 
 
-Pre-requisites
---------------
+Infrastructure as code lays the foundation for agility that aligns with your product develop efforts opens a path way to easily scale to many types of clouds to manage heterogeneous information systems.
 
-- AWS access and secret keys to an active AWS account
-- A workstation with internet connection
+The Terraform Way
+-----------------
 
-Please note, you will be creating real instances that cost money. I did my best to keep the utilization foot print to the lowest possible configuration, and I estimate less than hour to complete all the steps in this guide.
+[Terraform](https://www.terraform.io) is automation tool for the cloud from creators of Vagrant, [Hashicorp](https://hashicorp.com) (Creators of [Vagrant](https://www.vagrantup.com), [Consul](https://www.consul.io) and many more sysadmin favorites).
 
-We will also be destroying all the infrastructure components created during this tutorial to demonstrate the disposable nature of infstrasture-of-code.
+It provides powerful primitives to elegantly define your infrastructure as code. It’s simple yet powerful syntax to describe infrastructure components allow you to build complex, version controlled, collaborative, heterogeneous and disposable systems at a very high productivity.
+
+In simple terms, terraforming begins with you describing the desired state of your infrastructure in a configuration file, it then generates an execution plan describing what it will do to reach that desired state. You can then choose to execute (or modify) the plan to build, remove or modify desired components.
+
 
 Settting up your workstation
 -----------------------------
 
-You can install terraform using homebrew on a Mac using ```brew install terraform```. Alternative, find the [appropriate package](https://www.terraform.io/downloads.html) for your system and download it. Terraform is packaged as a zip archive. After downloading Terraform, unzip the contents of the zip archive to directory that is in your `PATH`, ideally under `/usr/local/bin`. You can verify terraform is properly installed by running `terraform`, it should return something like:
+You can install terraform using [Homebrew](http://brew.sh) on a Mac using ```brew update && brew install terraform```. 
+
+Alternative, find the [appropriate package](https://www.terraform.io/downloads.html) for your system and download it. Terraform is packaged as a zip archive. After downloading Terraform, unzip the contents of the zip archive to directory that is in your `PATH`, ideally under `/usr/local/bin`. You can verify terraform is properly installed by running `terraform`, it should return something like:
 
 ```sh
 usage: terraform [--version] [--help] <command> [<args>]
@@ -89,7 +118,8 @@ $ cd $HOME/infrastructure
 Defining variables for your infrastructure
 ------------------------------------------
 
-Configurations can be defined in any file with '.tf' extention using terraform syntax or json syntax. Its a good practice to start with a `variables.tf` that defines all variables that can be easily changed to tune your infrastructure. Create a file called `variables.tf` with the below contents:
+Configurations can be defined in any file with '.tf' extension using terraform syntax or as json files. Its a general practice to start with a `variables.tf` that defines all variables that can be easily changed to tune your infrastructure.
+Create a file called `variables.tf` with the below contents:
 
 ```
 variable "access_key" { 
@@ -130,14 +160,14 @@ variable "amis" {
 }
 ```
 
-The `variable` block defines a single input variable your configuration will require to provision your infrastructure, `description` parameter is used to describe what the variable is used for and `default` parameter gives it a default value, our example requires that you provide ```access_key``` and ```secret_key``` variables and optionally provide ```region```, region will default to `us-west-1` when not provided.
+The `variable` block defines a single input variable your configuration will require to provision your infrastructure, `description` parameter is used to describe what the variable is  for and the `default` parameter gives it a default value, our example requires that you provide ```access_key``` and ```secret_key``` variables and optionally provide ```region```, region will otherwise default to `us-west-1` when not provided.
 
-Variables can also have multiple default values with keys to access them, such variables are called maps. Values in maps can be accessed using interoplation systax which will be covered in the next section of the guide
+Variables can also have multiple default values with keys to access them, such variables are called maps. Values in maps can be accessed using interpolation syntax which will be covered in the coming sections of the guide.
 
 Creating your first terraform resource - VPC
 ---------------------------------------------
 
-Create a `aws-vpc.tf` file in the current directory with the below configuration:
+Create a `aws-vpc.tf` file under the current directory with the below configuration:
 
 ```
 /* Setup our aws provider */
@@ -157,17 +187,19 @@ resource "aws_vpc" "default" {
 }
 ```
 
-The `provider` block defines what provider to build the infructure for, Terraform has support for various other providers like Google Compute Cloud, DigitalOcean, Heroku etc. You can see a list of supported providers on the [providers page](https://www.terraform.io/docs/providers/index.html)
+The `provider` block defines the configuration for the cloud providers, aws in our case. Terraform has support for various other providers like Google Compute Cloud, DigitalOcean, Heroku etc. You can see a full list of supported providers on the [terraform providers page](https://www.terraform.io/docs/providers/index.html).
 
-`resource` block defines the resource being created. The above example creates a VPC with a CIDR block of `10.128.0.0/16` and attaches a Name tag `airpair-example`, you can read more about various other parameters that can be defined for ```aws_vpc``` on the [aws_vpc resource documentation page](https://www.terraform.io/docs/providers/aws/r/vpc.html)
+The `resource` block defines the resource being created. The above example creates a VPC with a CIDR block of `10.128.0.0/16` and attaches a `Name` tag `airpair-example`, you can read more about various other parameters that can be defined for ```aws_vpc``` on the [aws_vpc resource documentation page](https://www.terraform.io/docs/providers/aws/r/vpc.html)
 
-Parameters accepts string values which that can be [interpolated](https://www.terraform.io/docs/configuration/interpolation.html) when wrapped with `${}`. In the ```aws``` provider block, specifying ```${var.access_key}``` for 
-for access key will read the value from the user provided for variable ```access_key```. You will see extensive usage of interpolation in the rest of this guide.
+Parameters accepts string values that can be [interpolated](https://www.terraform.io/docs/configuration/interpolation.html) when wrapped with `${}`. In the ```aws``` provider block, specifying ```${var.access_key}``` for 
+for access key will read the value from the user provided for variable ```access_key```. 
+
+You will see extensive usage of interpolation in the coming sections of this guide.
 
 Provisioning your VPC
 ---------------------
 
-Running `terraform apply` will create the VPC by prompting you to to input AWS access key and secret key, the output should look like look like the below. For default values, hitting `<return>` key will assign default values defined in the `variables.tf` file.
+Running `terraform apply` will create the VPC by prompting you to to input AWS access and secret keys, the output should look like look like the below. For default values, hitting `<return>` key will assign default values defined in the `variables.tf` file.
 
 ```sh
 $ terraform apply
@@ -217,8 +249,8 @@ access_key = "foo"
 secret_key = "bar"
 ```
 
-Updating your infrastructure
-----------------------------
+Adding the public subnet
+------------------------
 
 Lets now add a public subnet with a ip range of 10.128.0.0/24 and attach a internet gateway, create a `public-subnet.tf` with the below configuration:
 
@@ -260,7 +292,7 @@ Anything under ```/* .. */``` will be considered as comments.
 
 Running `terraform plan` will generate an execution plan for you to verify before creating the actual resources, it is recommended that you always inspect the plan before running the `apply` command.
 
-Resource dependencies are implicitly determined during the plan phase. They can also be explictly defined using ```depends_on``` parameter. In the above configuration, resource ```aws_subnet.public``` depends on ```aws_internet_gatway.default``` and will only be created after ```aws_internet_gateway.default``` is successfully created.
+Resource dependencies are implicitly determined during the refresh phase (in planing and application phases). They can also be explicitly defined using ```depends_on``` parameter. In the above configuration, resource ```aws_subnet.public``` depends on ```aws_internet_gatway.default``` and will only be created after ```aws_internet_gateway.default``` is successfully created. 
 
 The output of `terraform plan` should look something like the below:
 
@@ -305,7 +337,9 @@ Note: You didn't specify an "-out" parameter to save this plan, so when
 
 *The vpc_id will different in your actual output from the above example output*
 
-The `+` before `aws_internet_gateway.default` indicates that a new resource will be created. After reviewing your plan, run `terraform apply` to create your resources. You can verify the subnet has been created by running `terraform show` or by visiting the aws console.  
+The `+` before `aws_internet_gateway.default` indicates that a new resource will be created. 
+
+After reviewing your plan, run `terraform apply` to create your resources. You can verify the subnet has been created by running `terraform show` or by visiting the aws console.  
 
 Create security groups
 ----------------------
@@ -336,7 +370,6 @@ resource "aws_security_group" "default" {
     Name = "airpair-example-default-vpc" 
   }
 }
-
 
 /* Security group for the nat server */
 resource "aws_security_group" "nat" {
@@ -402,14 +435,13 @@ Apply complete! Resources: 3 added, 0 changed, 0 destroyed.
 Create SSH Key Pair
 -------------------
 
-We will need a default ssh key to be bootstraped on the newly created instances to be able to login, first, generate a new key by running:
+We will need a default ssh key to be bootstrapped on the newly created instances to be able to login. Make sure you have `ssh` directory and generate a new key by running the:
 
 ```sh
-$ mkdir -p ssh # make sure the ssh directory exists
 $ sh-keygen -t rsa -C "insecure-deployer" -P '' -f ssh/insecure-deployer
 ```
 
-The above command will create a public-private key pair under ssh, this is an insecure key and should be replaced after the instance is boostraped.
+The above command will create a public-private key pair in `ssh` directory, this is an insecure key and should be replaced after the instance is bootstrapped.
 
 Create a new file `key-pairs.sh` with the below config and register the newly generated SSH key pair by running`terraform plan` and `terraform apply`.
 
@@ -461,23 +493,25 @@ resource "aws_instance" "nat" {
 }
 ```
 
-In order for NAT instance to route packets, [iptables](http://ipset.netfilter.org/iptables.man.html) needs to be configured be with a rule in the `nat` table for [IP Masquerade](http://www.tldp.org/HOWTO/IP-Masquerade-HOWTO/ipmasq-background2.1.html). We also need to install docker, download the openvpn container and generate server configuration.
+In order for that NAT instance to route packets, [iptables](http://ipset.netfilter.org/iptables.man.html) needs to be configured be with a rule in the `nat` table for [IP Masquerade](http://www.tldp.org/HOWTO/IP-Masquerade-HOWTO/ipmasq-background2.1.html). We also need to install docker, download the openvpn container and generate server configuration.
 
-Terraform provides a set of [provisioning options](https://www.terraform.io/docs/provisioners/index.html) that can be used to run aribitary commands on the instance when they are created. For our nat instance above, we use ```remote-exec``` to execute the set of commands on the instance.
+Terraform provides a set of [provisioning options](https://www.terraform.io/docs/provisioners/index.html) that can be used to run arbitrary commands on the instances when they are created. For our nat instance above, we use ```remote-exec``` to execute the set of commands on the instance.
 
-``connection`` block defines the [connection parameters](https://www.terraform.io/docs/provisioners/connection.html) to remotely ssh into the instance.
+``connection`` block defines the [connection parameters](https://www.terraform.io/docs/provisioners/connection.html) for ssh access to the instance.
 
 Create private subnet and configure routing
 -------------------------------------------
+
 Create a private subnet with a CIDR range of 10.128.1.0/24 and configure the routing table to route all traffic via the nat. Append 'main.tf' with the below config:
 
 ```
 /* Private subnet */
 resource "aws_subnet" "private" {
   vpc_id            = "${aws_vpc.default.id}"
-  cidr_block        = "10.128.1.0/24"
+  cidr_block        = "${var.private_subnet_cidr}"
   availability_zone = "us-west-1a"
   map_public_ip_on_launch = false
+  depends_on = ["aws_instance.nat"]
   tags { 
     Name = "private" 
   }
@@ -499,7 +533,9 @@ resource "aws_route_table_association" "private" {
 }
 ```
 
-Run ```terraform plan``` and ```terraform apply```
+Notice our second time use of ```depends_on```, in this case it only creates the private subnet after provisioning the NAT instance. With out the iptables configuration, the instances in the private subnet will not be able to access internet and will fail to download docker containers.
+
+Run ```terraform plan``` and ```terraform apply``` to create the resources.
 
 Adding app instances and a load balancer
 ----------------------------------------
@@ -524,13 +560,13 @@ runcmd:
 
 ```
 
-Create `app.tf` file with the below configuration:
+Create `app-servers.tf` file with the below configuration:
 
 ```
 /* App servers */
 resource "aws_instance" "app" {
   count = 2
-  ami = "ami-049d8641"
+  ami = "${lookup(var.amis, var.region)}"
   instance_type = "t2.micro"
   subnet_id = "${aws_subnet.private.id}"
   security_groups = ["${aws_security_group.default.id}"]
@@ -555,7 +591,6 @@ resource "aws_elb" "app" {
   }
   instances = ["${aws_instance.app.*.id}"]
 }
-
 ```
 
 `count` parameter indicates the number of identical resources to create and `${count.index}` interpolation in the name tag provides the current index.
@@ -589,7 +624,7 @@ output "elb.hostname" {
 }
 ```
 
-Since we are not changing any values, run `terraform apply` to populate outputs in the state file. Inspect the `elb.hostname` by running
+Since we are not changing any values, run `terraform apply` to populate outputs in the state file. Inspect the `elb.hostname` by running:
 
 $ open "http://$(terraform output elb.hostname)"
 
@@ -600,8 +635,7 @@ Configure OpenVPN server and generate client config
 
 The below steps configure the VPN servers and generate a client configuration with embedded keys to connect with your openvpn client on your workstation. 
 
-Considering the commands are fairly large, we will be creating command wrappers to be able to easily run them again. A big part of operatinaly effiency comes from our ability to simply complicated command which are unlikely to be easily recalled. After each successful step, we will save the command under `bin` in an executable file to make it easy for us to do it the next time. 
-
+Considering the commands are fairly long, we will be creating command wrappers to be able to easily run them again. A big part of operatinaly effiency comes from our ability to simply complicated commands which are unlikely to be easily recalled. After each successful step, we will save the command under `bin` in an executable file. 
 
 1. Initialize PKI and save the command under bin/ovpn-init
 
@@ -613,11 +647,10 @@ Considering the commands are fairly large, we will be creating command wrappers 
   EOF
 
   $ chmod +x bin/ovpn-init 
-
   $ bin/ovpn-init
   ```
-
-  The above command will prompt you for a passphrase for the root certificate, choose a strong passphrase and store is some where you'll rememeber. This passphrase is required every time you genenerate a new client configuration.
+  
+  The above command will prompt you for a passphrase for the root certificate, choose a strong passphrase and store it in a safe place. This passphrase is required every time you genenerate a new client configuration.
 
 2. Start the VPN server.
 
