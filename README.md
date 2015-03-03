@@ -53,10 +53,16 @@ Available commands are:
 Setting your project directory
 ------------------------------
 
-Create a directory to host your project files. For our example, we will use `$HOME/infrastructure`
+Create a directory to host your project files. For our example, we will use `$HOME/infrastructure`, with the below structure:
 
 ```sh
-$ mkdir $HOME/infrastructure
+.
+├── cloud-config
+└── ssh
+```
+
+```sh
+$ mkdir -p $HOME/infrastructure/cloud-config $HOME/infrastructure/ssh
 $ cd $HOME/infrastructure
 ```
 
@@ -373,8 +379,6 @@ resource "aws_instance" "nat" {
   }
   provisioner "remote-exec" {
     inline = [
-      "sudo echo 'nat' > /etc/hostname",
-      "sudo echo '127.0.0.0 nat' >> /etc/hosts",
       "curl -sSL https://get.docker.com/ubuntu/ | sudo sh",
       "sudo iptables -t nat -A POSTROUTING -j MASQUERADE",
       "echo 1 > /proc/sys/net/ipv4/conf/all/forwarding",
@@ -388,7 +392,7 @@ resource "aws_instance" "nat" {
 
 Create private subnet and configure routing
 -------------------------------------------
-Create a private subnet with a CIDR range of 10.128.1.0/24 and configure the routing table to route all traffic via the nat. append 'main.tf' with the below config:
+Create a private subnet with a CIDR range of 10.128.1.0/24 and configure the routing table to route all traffic via the nat. Append 'main.tf' with the below config:
 
 ```
 /* Private subnet */
@@ -417,6 +421,69 @@ resource "aws_route_table_association" "private" {
   route_table_id = "${aws_route_table.private.id}"
 }
 ```
+
+Run ```terraform plan``` and ```terraform apply```
+
+Adding app instances and a load balancer
+----------------------------------------
+
+Lets add two app servers running nginx containers in the private subnet and configure a load balancer in the public subnet. 
+
+The app servers are not accessible directly from the internet and can be accessed via the VPN. Since we haven't configured our VPN yet to access the instances, we will provision the instances using by bootrapping `cloud-init` yaml file via the ```user_data``` parameter.
+
+`cloud-init` is a defacto multi-distribution package that handles early initialization of a cloud instance. You can see various examples [in the documentation](http://cloudinit.readthedocs.org/en/latest/topics/examples.html)
+
+Create `app.yml` cloud config file under `cloud-config` directory with the below config:
+
+```yaml
+#cloud-config
+# Cloud config for application servers 
+
+runcmd:
+  # Install docker
+  - curl -sSL https://get.docker.com/ubuntu/ | sudo sh
+  # Run nginx
+  - docker run -d -p 80:80 dockerfile/nginx
+
+```
+
+Create `app.tf` file with the below configuration:
+
+```
+/* App servers */
+resource "aws_instance" "app" {
+  count = 2
+  ami = "ami-049d8641"
+  instance_type = "t2.micro"
+  subnet_id = "${aws_subnet.private.id}"
+  security_groups = ["${aws_security_group.default.id}"]
+  key_name = "${aws_key_pair.deployer.key_name}"
+  source_dest_check = false
+  user_data = "${file(\"cloud-config/app.yml\")}"
+  tags = { 
+    Name = "airpair-example-app-${count.index}"
+  }
+}
+
+/* Load balancer */
+resource "aws_elb" "app" {
+  name = "airpair-example-elb"
+  subnets = ["${aws_subnet.public.id}"]
+  security_groups = ["${aws_security_group.default.id}", "${aws_security_group.web.id}"]
+  listener {
+    instance_port = 80
+    instance_protocol = "http"
+    lb_port = 80
+    lb_protocol = "http"
+  }
+  instances = ["${aws_instance.app.*.id}"]
+}
+
+```
+
+`count` parameter indicates the number of identical resources to create and `${count.index}` interpolation in the name tag provides the current index.
+
+You read more about using count in resources at [terraform variable documentation](https://www.terraform.io/docs/configuration/resources.html#using-variables-with-count)
 
 Run ```terraform plan``` and ```terraform apply```
 
